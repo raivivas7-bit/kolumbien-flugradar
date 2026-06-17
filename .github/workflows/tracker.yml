@@ -1,0 +1,51 @@
+name: Flight Price Tracker
+
+on:
+  schedule:
+    # Run every 3 hours
+    - cron: '0 */3 * * *'
+  workflow_dispatch: # Allow manual execution
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to commit and push changes back to the repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Tracker
+        env:
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+          RAPIDAPI_HOST: ${{ secrets.RAPIDAPI_HOST }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python tracker.py
+
+      - name: Commit and Push Database changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if flight_radar.db has changed
+          if git diff --name-only | grep -q "flight_radar.db" || git status --porcelain | grep -q "flight_radar.db"; then
+            echo "Database has changed, committing..."
+            git add flight_radar.db
+            git commit -m "Auto-update flight database [skip ci]"
+            git push
+          else
+            echo "No changes in database."
+          fi
