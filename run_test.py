@@ -43,7 +43,7 @@ def main():
     print("Erstelle Backup von config.json...")
     shutil.copy2(config_path, backup_path)
     
-    # Write a test config with a single flight pod and a single date to test speed and avoid rate limits
+    # Write a test config with a matching outbound/inbound pair
     test_config = {
         "search_settings": {
             "max_stopovers": 1,
@@ -53,7 +53,7 @@ def main():
         "travel_pods": {
             "hinfluege": [
                 {
-                    "id": "test_rapidapi_live",
+                    "id": "hin_test_live",
                     "passengers": ["P"],
                     "bags_to_add": 1,
                     "from": "MUC",
@@ -62,7 +62,17 @@ def main():
                     "date_to": "31/07/2026"
                 }
             ],
-            "rueckfluege": []
+            "rueckfluege": [
+                {
+                    "id": "rueck_test_live",
+                    "passengers": ["P"],
+                    "bags_to_add": 1,
+                    "from": "BOG",
+                    "to": "MUC",
+                    "date_from": "17/08/2026",
+                    "date_to": "18/08/2026"
+                }
+            ]
         }
     }
     
@@ -75,18 +85,26 @@ def main():
         
         # Clean up old test runs
         with database.get_connection() as conn:
-            conn.execute("DELETE FROM flights WHERE pod_id = ?", ("test_rapidapi_live",))
+            conn.execute("DELETE FROM flights WHERE pod_id = ?", ("hin_test_live__rueck_test_live",))
             conn.commit()
             
         # Optional: pre-populate database with a high price to trigger a Telegram price alert
         print("Pre-populating database with a high price of 9999 EUR to trigger drop alert...")
         database.insert_flight(
-            pod_id="test_rapidapi_live",
-            price=9999.0,
-            airline="Mock Airline",
-            booking_link="http://example.com",
-            is_live_check=True,
-            flight_date="31/07/2026"
+            pod_id="hin_test_live__rueck_test_live",
+            price_oneway_hin=4000.0,
+            price_oneway_zurueck=4000.0,
+            price_oneway_total=8000.0,
+            price_roundtrip=9999.0,
+            airline_hin="Mock Airline",
+            airline_zurueck="Mock Airline",
+            airline_roundtrip="Mock Airline",
+            booking_link_hin="http://example.com",
+            booking_link_zurueck="http://example.com",
+            booking_link_roundtrip="http://example.com",
+            flight_date_hin="31/07/2026",
+            flight_date_zurueck="17/08/2026",
+            is_live_check=True
         )
         
         print("\n--- Starte Live-API-Suche ---")
@@ -94,8 +112,8 @@ def main():
         print("--- API-Suche abgeschlossen ---\n")
         
         # Verify database write
-        latest_price = database.get_latest_price("test_rapidapi_live")
-        if latest_price and latest_price < 9999.0:
+        latest_price = database.get_latest_price("hin_test_live__rueck_test_live")
+        if latest_price and latest_price < 8000.0:
             print(f"[ERFOLG] Ein Flugpreis wurde gefunden und gespeichert!")
             print(f"   Gefundener Preis: {latest_price:.2f} EUR")
         else:
