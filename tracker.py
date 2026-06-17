@@ -124,8 +124,8 @@ def generate_dates(date_from_str: str, date_to_str: str) -> List[str]:
 
 def fetch_flight_price_rapidapi(start: str, dest: str, date: str, passengers_count: int, currency: str = "EUR") -> Optional[dict]:
     """
-    Sende einen GET-Request an den Search-Endpoint der Kiwi RapidAPI.
-    Extrahiert den günstigsten Flug und gibt die Flugdaten zurück.
+    Sende einen GET-Request an den Oneway-Search-Endpoint der Kiwi RapidAPI.
+    Unterstützt sowohl einzelne Reisedaten als auch Datumsbereiche (z.B. "2026-07-31..2026-08-03").
     """
     key, host = get_rapidapi_credentials()
     if not key or not host:
@@ -140,10 +140,21 @@ def fetch_flight_price_rapidapi(start: str, dest: str, date: str, passengers_cou
     }
     
     # Konvertiere das Datum von DD/MM/YYYY zu YYYY-MM-DD
-    try:
-        api_date = datetime.datetime.strptime(date, "%d/%m/%Y").strftime("%Y-%m-%d")
-    except ValueError:
-        api_date = date
+    # Wenn ein Datumsbereich (mit "..") vorliegt, konvertiere beide Daten
+    api_date = date
+    if ".." in date:
+        parts = date.split("..")
+        try:
+            d1 = datetime.datetime.strptime(parts[0], "%d/%m/%Y").strftime("%Y-%m-%d")
+            d2 = datetime.datetime.strptime(parts[1], "%d/%m/%Y").strftime("%Y-%m-%d")
+            api_date = f"{d1}..{d2}"
+        except ValueError:
+            pass
+    else:
+        try:
+            api_date = datetime.datetime.strptime(date, "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
         
     params = {
         "source": start,
@@ -184,18 +195,131 @@ def fetch_flight_price_rapidapi(start: str, dest: str, date: str, passengers_cou
         if booking_options:
             booking_link = booking_options[0].get("booking_url", "")
             
+        # Extrahiere das Datum aus dem Hinflug-Segment
+        segments = cheapest.get("outbound", {}).get("segments", [])
+        flight_date_str = date
+        if segments:
+            local_time = segments[0].get("source", {}).get("local_time", "")
+            if "T" in local_time:
+                try:
+                    dt = datetime.datetime.strptime(local_time.split("T")[0], "%Y-%m-%d")
+                    flight_date_str = dt.strftime("%d/%m/%Y")
+                except ValueError:
+                    pass
+            
         return {
             "price": float(price_val),
             "airlines": airlines,
             "deep_link": booking_link,
             "bags_price": cheapest.get("bags_price", {}),
-            "date": date
+            "date": flight_date_str
         }
     except Exception as e:
-        print(f"  [RapidAPI-Fehler] Ausnahme bei Anfrage: {e}")
+        print(f"  [RapidAPI-Fehler] Ausnahme bei Oneway-Anfrage: {e}")
         return None
 
-def calculate_price_with_bags(flight: dict, bags_to_add: int) -> Tuple[float, float]:
+def fetch_flight_price_roundtrip(start: str, dest: str, date_out: str, date_in: str, passengers_count: int, currency: str = "EUR") -> Optional[dict]:
+    """
+    Sende einen GET-Request an den Roundtrip-Search-Endpoint der Kiwi RapidAPI.
+    Unterstützt sowohl einzelne Reisedaten als auch Datumsbereiche (z.B. "2026-07-31..2026-08-03").
+    """
+    key, host = get_rapidapi_credentials()
+    if not key or not host:
+        print("  [RapidAPI] Fehler: RAPIDAPI_KEY oder RAPIDAPI_HOST fehlt in der Konfiguration!")
+        return None
+        
+    url = f"https://{host}/api/v1/flights/search-roundtrip"
+    
+    headers = {
+        "x-rapidapi-key": key,
+        "x-rapidapi-host": host
+    }
+    
+    # Konvertiere Hinflugs- und Rückflugsdaten
+    api_date_out = date_out
+    if ".." in date_out:
+        parts = date_out.split("..")
+        try:
+            d1 = datetime.datetime.strptime(parts[0], "%d/%m/%Y").strftime("%Y-%m-%d")
+            d2 = datetime.datetime.strptime(parts[1], "%d/%m/%Y").strftime("%Y-%m-%d")
+            api_date_out = f"{d1}..{d2}"
+        except ValueError:
+            pass
+    else:
+        try:
+            api_date_out = datetime.datetime.strptime(date_out, "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+            
+    api_date_in = date_in
+    if ".." in date_in:
+        parts = date_in.split("..")
+        try:
+            d1 = datetime.datetime.strptime(parts[0], "%d/%m/%Y").strftime("%Y-%m-%d")
+            d2 = datetime.datetime.strptime(parts[1], "%d/%m/%Y").strftime("%Y-%m-%d")
+            api_date_in = f"{d1}..{d2}"
+        except ValueError:
+            pass
+    else:
+        try:
+            api_date_in = datetime.datetime.strptime(date_in, "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+        
+    params = {
+        "source": start,
+        "destination": dest,
+        "departure_date": api_date_out,
+        "return_date": api_date_in,
+        "currency": currency,
+        "adults": passengers_count,
+        "limit": 5
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        if response.status_code != 200:
+            print(f"  [RapidAPI-Fehler] Status: {response.status_code} | Nachricht: {response.text}")
+            return None
+            
+        data = response.json()
+        itineraries = data.get("itineraries", [])
+        if not itineraries:
+            return None
+            
+        # Finde den absolut günstigsten Flug aus den Ergebnissen
+        cheapest = min(itineraries, key=lambda x: x.get("price", {}).get("amount", float('inf')))
+        
+        price_val = cheapest.get("price", {}).get("amount")
+        if price_val is None:
+            return None
+            
+        # Extrahiere Carrier-Namen
+        carriers = cheapest.get("outbound", {}).get("carriers", [])
+        if "inbound" in cheapest and cheapest["inbound"]:
+            carriers += cheapest.get("inbound", {}).get("carriers", [])
+            
+        airlines = list(dict.fromkeys([c.get("name", "Unknown Airline") for c in carriers if c.get("name")]))
+        if not airlines:
+            airlines = ["Kiwi Option"]
+            
+        # Extrahiere booking_url
+        booking_options = cheapest.get("booking_options", [])
+        booking_link = ""
+        if booking_options:
+            booking_link = booking_options[0].get("booking_url", "")
+            
+        return {
+            "price": float(price_val),
+            "airlines": airlines,
+            "deep_link": booking_link,
+            "bags_price": cheapest.get("bags_price", {})
+        }
+    except Exception as e:
+        print(f"  [RapidAPI-Fehler] Ausnahme bei Roundtrip-Anfrage: {e}")
+        return None
+
+def calculate_price_with_bags(flight: dict, bags_to_add: int, is_roundtrip: bool = False) -> Tuple[float, float]:
     """
     Berechnet den Gesamtpreis inklusive Gepäckgebühren.
     """
@@ -220,128 +344,24 @@ def calculate_price_with_bags(flight: dict, bags_to_add: int) -> Tuple[float, fl
             break
             
     if not bag_cost_found:
-        bag_cost = 45.0 * bags_to_add
+        multiplier = 2 if is_roundtrip else 1
+        bag_cost = 45.0 * bags_to_add * multiplier
                 
     return bag_cost, base_price + bag_cost
 
-def filter_flights(flights: list, pod: dict, search_settings: dict) -> list:
+def find_pod_pairs(hinfluege: List[dict], rueckfluege: List[dict]) -> List[Tuple[dict, dict]]:
     """
-    Filtert die Flüge lokal anhand der spezifischen Kriterien des Pods.
+    Findet Hinflug- und Rückflug-Pods, die zusammengehören, basierend auf überlappenden Passagieren.
     """
-    filtered = []
-    max_duration_hours = search_settings.get("max_fly_duration_hours")
-    
-    for flight in flights:
-        # 1. Zwischenstopps prüfen
-        stopovers = len(flight.get("route", [])) - 1
-        if stopovers > search_settings.get("max_stopovers", 1):
-            continue
-            
-        # 2. Flugdauer prüfen
-        duration_sec = flight.get("duration", {}).get("total", 0)
-        if isinstance(flight.get("duration"), (int, float)):
-            duration_sec = flight["duration"]
-        
-        duration_hours = duration_sec / 3600.0
-        if max_duration_hours and duration_hours > max_duration_hours:
-            continue
-            
-        # 3. Abflugzeit prüfen
-        time_from = pod.get("time_from")
-        if time_from:
-            local_dep = flight.get("local_departure", "")
-            if "T" in local_dep:
-                dep_time = local_dep.split("T")[1][:5]
-                if dep_time < time_from:
-                    continue
-                    
-        # 4. Ankunftszeit-Limit prüfen
-        arrival_time_to = pod.get("arrival_time_to")
-        if arrival_time_to:
-            local_arr = flight.get("local_arrival", "")
-            if "T" in local_arr:
-                arr_time = local_arr.split("T")[1][:5]
-                if arr_time > arrival_time_to:
-                    continue
-                    
-        # 5. Ankunftsdatum-Limit prüfen
-        arrival_date_to = pod.get("arrival_date_to")
-        if arrival_date_to:
-            local_arr = flight.get("local_arrival", "")
-            if "T" in local_arr:
-                arr_date = local_arr.split("T")[0]
-                parts = arrival_date_to.split("/")
-                iso_arr_date_to = f"{parts[2]}-{parts[1]}-{parts[0]}"
-                if arr_date > iso_arr_date_to:
-                    continue
-                    
-        filtered.append(flight)
-    return filtered
-
-def fetch_flights_for_pod(pod: dict, search_settings: dict) -> Tuple[Optional[dict], bool]:
-    """
-    Fragt RapidAPI für einen Pod ab.
-    Iteriert über alle Flughafenkombinationen und Tage,
-    ruft die API auf und findet den günstigsten Flug.
-    Gibt ein Tupel (cheapest_flight, is_live) zurück.
-    """
-    pod_id = pod.get("id")
-    origins = [o.strip() for o in pod.get("from", "").split(",") if o.strip()]
-    destinations = [d.strip() for d in pod.get("to", "").split(",") if d.strip()]
-    
-    date_from_str = pod.get("date_from")
-    date_to_str = pod.get("date_to")
-    
-    if not date_from_str:
-        return None, False
-        
-    if not date_to_str:
-        date_to_str = date_from_str
-        
-    dates = generate_dates(date_from_str, date_to_str)
-    if not dates:
-        return None, False
-        
-    passengers_count = len(pod.get("passengers", ["P"]))
-    currency = search_settings.get("currency", "EUR")
-    
-    print(f"  [RapidAPI] Starte Abfragen für Pod '{pod_id}' (Kombinationen: {len(origins)}x{len(destinations)}x{len(dates)} = {len(origins)*len(destinations)*len(dates)})...")
-    
-    api_flights = []
-    
-    for origin in origins:
-        for dest in destinations:
-            for d in dates:
-                flight_data = fetch_flight_price_rapidapi(origin, dest, d, passengers_count, currency)
-                if flight_data:
-                    api_flights.append(flight_data)
-                    print(f"    -> Preis für {origin.upper()} -> {dest.upper()} am {d}: {flight_data.get('price'):.2f} {currency} ({', '.join(flight_data.get('airlines', []))})")
-                else:
-                    print(f"    -> Kein Ergebnis oder Fehler für {origin} -> {dest} am {d}")
-                # Rate limit sleep
-                time.sleep(1.0)
-                
-    if api_flights:
-        # Günstigsten Flug unter allen Kombinationen finden
-        cheapest = min(api_flights, key=lambda x: x.get("price", float('inf')))
-        
-        # Um die Kompatibilität zu wahren, passen wir die Struktur an
-        flight_format = {
-            "price": cheapest.get("price"),
-            "bags_price": cheapest.get("bags_price") or {},
-            "airlines": cheapest.get("airlines") or [],
-            "deep_link": cheapest.get("deep_link") or "",
-            "local_departure": cheapest.get("local_departure", ""),
-            "local_arrival": cheapest.get("local_arrival", ""),
-            "duration": cheapest.get("duration") or {},
-            "route": cheapest.get("route") or [],
-            "date": cheapest.get("date")
-        }
-        return flight_format, True
-        
-    print(f"  [Warning] RapidAPI lieferte keine Ergebnisse für Pod '{pod_id}'.")
-    return None, False
-
+    pairs = []
+    for hin in hinfluege:
+        hin_pax = set(hin.get("passengers", []))
+        for rueck in rueckfluege:
+            rueck_pax = set(rueck.get("passengers", []))
+            # Wenn mindestens ein Passagier übereinstimmt
+            if hin_pax.intersection(rueck_pax):
+                pairs.append((hin, rueck))
+    return pairs
 
 def run_tracker() -> None:
     """
@@ -360,80 +380,165 @@ def run_tracker() -> None:
     hinfluege = travel_pods.get("hinfluege", [])
     rueckfluege = travel_pods.get("rueckfluege", [])
 
-    all_pods = [(pod, "Hinflug") for pod in hinfluege] + [(pod, "Rückflug") for pod in rueckfluege]
+    # Paarbildung der Flüge
+    pod_pairs = find_pod_pairs(hinfluege, rueckfluege)
     
-    print(f"Starte Abfrage für insgesamt {len(all_pods)} Pods...\n")
+    print(f"Starte Abfrage für insgesamt {len(pod_pairs)} Flug-Kombinationen...\n")
     
-    for pod, direction in all_pods:
-        pod_id = pod.get("id")
-        bags_to_add = pod.get("bags_to_add", 0)
+    currency = search_settings.get("currency", "EUR")
+    is_live_check = True
+    
+    for hin_pod, rueck_pod in pod_pairs:
+        hin_id = hin_pod.get("id")
+        rueck_id = rueck_pod.get("id")
+        pod_pair_id = f"{hin_id}__{rueck_id}"
         
-        print(f"Verarbeite {direction} '{pod_id}' ({pod.get('from')} -> {pod.get('to')})...")
+        # Gepäck und Passagiere basieren auf der Rückflug-Gruppe (Ziel-Vergleichs-Gruppe)
+        bags_to_add = rueck_pod.get("bags_to_add", 0)
+        passengers_count = len(rueck_pod.get("passengers", ["P"]))
         
-        flight, is_live = fetch_flights_for_pod(pod, search_settings)
+        print(f"Verarbeite Kombination: {pod_pair_id} ({hin_pod.get('from')} -> {hin_pod.get('to')} / {rueck_pod.get('from')} -> {rueck_pod.get('to')})...")
         
-        if flight:
-            bag_cost, total_price = calculate_price_with_bags(flight, bags_to_add)
+        # Datumsbereiche erstellen
+        date_range_hin = f"{hin_pod['date_from']}..{hin_pod['date_to']}"
+        date_range_zurueck = f"{rueck_pod['date_from']}..{rueck_pod['date_to']}"
+        
+        origins_hin = [o.strip() for o in hin_pod.get("from", "").split(",") if o.strip()]
+        dests_hin = [d.strip() for d in hin_pod.get("to", "").split(",") if d.strip()]
+        origins_zurueck = [o.strip() for o in rueck_pod.get("from", "").split(",") if o.strip()]
+        dests_zurueck = [d.strip() for d in rueck_pod.get("to", "").split(",") if d.strip()]
+        
+        # 1. Hinflug Oneway Abfrage
+        print("  -> Query Outbound Oneway...")
+        cheapest_hin = None
+        for org in origins_hin:
+            for dst in dests_hin:
+                flight = fetch_flight_price_rapidapi(org, dst, date_range_hin, passengers_count, currency)
+                if flight:
+                    if cheapest_hin is None or flight["price"] < cheapest_hin["price"]:
+                        cheapest_hin = flight
+                time.sleep(1.0)
+                
+        # 2. Rückflug Oneway Abfrage
+        print("  -> Query Inbound Oneway...")
+        cheapest_zurueck = None
+        for org in origins_zurueck:
+            for dst in dests_zurueck:
+                flight = fetch_flight_price_rapidapi(org, dst, date_range_zurueck, passengers_count, currency)
+                if flight:
+                    if cheapest_zurueck is None or flight["price"] < cheapest_zurueck["price"]:
+                        cheapest_zurueck = flight
+                time.sleep(1.0)
+                
+        # 3. Roundtrip Abfrage
+        print("  -> Query Combined Roundtrip...")
+        cheapest_rt = None
+        for org in origins_hin:
+            for dst in dests_hin:
+                flight = fetch_flight_price_roundtrip(org, dst, date_range_hin, date_range_zurueck, passengers_count, currency)
+                if flight:
+                    if cheapest_rt is None or flight["price"] < cheapest_rt["price"]:
+                        cheapest_rt = flight
+                time.sleep(1.0)
+                
+        if cheapest_hin and cheapest_zurueck and cheapest_rt:
+            # Gepäck und Gesamtkosten berechnen
+            bag_cost_hin, price_hin = calculate_price_with_bags(cheapest_hin, bags_to_add, is_roundtrip=False)
+            bag_cost_zurueck, price_zurueck = calculate_price_with_bags(cheapest_zurueck, bags_to_add, is_roundtrip=False)
+            price_oneway_total = price_hin + price_zurueck
             
-            airlines = flight.get("airlines", [])
-            if not airlines and "route" in flight:
-                airlines = list(dict.fromkeys([seg.get("airline") for seg in flight["route"] if seg.get("airline")]))
-            airline_str = ", ".join(airlines) if airlines else "Unknown"
+            bag_cost_rt, price_rt = calculate_price_with_bags(cheapest_rt, bags_to_add, is_roundtrip=True)
             
-            booking_link = flight.get("deep_link")
-            is_live_val = 1 if is_live else 0
-            flight_date = flight.get("date", "-")
+            airline_hin_str = ", ".join(cheapest_hin.get("airlines", []))
+            airline_zurueck_str = ", ".join(cheapest_zurueck.get("airlines", []))
+            airline_rt_str = ", ".join(cheapest_rt.get("airlines", []))
             
-            latest_price = get_latest_price(pod_id)
+            booking_link_hin = cheapest_hin.get("deep_link")
+            booking_link_zurueck = cheapest_zurueck.get("deep_link")
+            booking_link_rt = cheapest_rt.get("deep_link")
             
-            if latest_price is not None:
-                diff = latest_price - total_price
+            flight_date_hin = cheapest_hin.get("date")
+            flight_date_zurueck = cheapest_zurueck.get("date")
+            
+            # Bester Deal ermitteln
+            if price_oneway_total < price_rt:
+                winner = "Option A (Getrennt gebucht)"
+                savings = price_rt - price_oneway_total
+            else:
+                winner = "Option B (Zusammen gebucht)"
+                savings = price_oneway_total - price_rt
+                
+            current_cheapest = min(price_oneway_total, price_rt)
+            
+            # Schwellenwert-Logik mit dem jeweils günstigsten Weg
+            latest_cheapest = get_latest_price(pod_pair_id)
+            
+            if latest_cheapest is not None:
+                diff = latest_cheapest - current_cheapest
                 if diff > 10.0:
                     msg = (
-                        f"🚨 <b>Flugpreis gesunken!</b> 🚨\n"
-                        f"<b>Pod:</b> <code>{pod_id}</code> ({direction})\n"
-                        f"<b>Route:</b> {pod.get('from')} ➔ {pod.get('to')}\n"
-                        f"<b>Datum:</b> {flight_date}\n"
-                        f"<b>Alter Preis:</b> {latest_price:.2f} EUR\n"
-                        f"<b>Neuer Preis:</b> {total_price:.2f} EUR (Ersparnis: {diff:.2f} EUR)\n"
-                        f"<b>Airline:</b> {airline_str}\n"
-                        f"<b>Link:</b> <a href=\"{booking_link}\">Jetzt buchen</a>"
+                        f"🚨 <b>Flugpreis gesunken! ({winner})</b> 🚨\n"
+                        f"<b>Kombination:</b> <code>{pod_pair_id}</code>\n"
+                        f"<b>Route:</b> {hin_pod.get('from')} ➔ {hin_pod.get('to')} / {rueck_pod.get('from')} ➔ {rueck_pod.get('to')}\n\n"
+                        f"🎫 <b>Option A (Getrennt gebucht):</b>\n"
+                        f"  • Hin ({flight_date_hin}): {price_hin:.2f} EUR ({airline_hin_str})\n"
+                        f"  • Zurück ({flight_date_zurueck}): {price_zurueck:.2f} EUR ({airline_zurueck_str})\n"
+                        f"  • <b>Gesamt:</b> {price_oneway_total:.2f} EUR\n\n"
+                        f"🔄 <b>Option B (Zusammen gebucht):</b>\n"
+                        f"  • Kombi-Ticket: {price_rt:.2f} EUR ({airline_rt_str})\n\n"
+                        f"💡 <b>Ersparnis bei {winner}:</b> {savings:.2f} EUR!\n"
                     )
+                    if price_oneway_total < price_rt:
+                        msg += f"🔗 Link: <a href=\"{booking_link_hin}\">Hinflug</a> | <a href=\"{booking_link_zurueck}\">Rückflug</a>"
+                    else:
+                        msg += f"🔗 Link: <a href=\"{booking_link_rt}\">Kombi-Ticket buchen</a>"
                     send_telegram_notification(msg, silent=False)
-                elif total_price > latest_price:
-                    diff_rise = total_price - latest_price
+                    
+                elif current_cheapest > latest_cheapest:
+                    diff_rise = current_cheapest - latest_cheapest
                     msg = (
                         f"📈 <b>Flugpreis gestiegen</b>\n"
-                        f"<b>Pod:</b> <code>{pod_id}</code> ({direction})\n"
-                        f"<b>Route:</b> {pod.get('from')} ➔ {pod.get('to')}\n"
-                        f"<b>Datum:</b> {flight_date}\n"
-                        f"<b>Alter Preis:</b> {latest_price:.2f} EUR\n"
-                        f"<b>Neuer Preis:</b> {total_price:.2f} EUR (Differenz: +{diff_rise:.2f} EUR)\n"
-                        f"<b>Airline:</b> {airline_str}\n"
-                        f"<b>Link:</b> <a href=\"{booking_link}\">Details ansehen</a>"
+                        f"<b>Kombination:</b> <code>{pod_pair_id}</code>\n"
+                        f"<b>Route:</b> {hin_pod.get('from')} ➔ {hin_pod.get('to')} / {rueck_pod.get('from')} ➔ {rueck_pod.get('to')}\n\n"
+                        f"🎫 <b>Option A (Getrennt gebucht):</b>\n"
+                        f"  • Hin ({flight_date_hin}): {price_hin:.2f} EUR\n"
+                        f"  • Zurück ({flight_date_zurueck}): {price_zurueck:.2f} EUR\n"
+                        f"  • <b>Gesamt:</b> {price_oneway_total:.2f} EUR\n\n"
+                        f"🔄 <b>Option B (Zusammen gebucht):</b>\n"
+                        f"  • Kombi-Ticket: {price_rt:.2f} EUR\n\n"
+                        f"💡 <b>Neuer Bestpreis:</b> {current_cheapest:.2f} EUR (Differenz: +{diff_rise:.2f} EUR)\n"
                     )
                     send_telegram_notification(msg, silent=True)
                 else:
-                    print(f"  -> Preisänderung ({latest_price:.2f} EUR -> {total_price:.2f} EUR) löst keine Benachrichtigung aus.")
+                    print(f"  -> Preisänderung (Letzter Bestpreis: {latest_cheapest:.2f} EUR -> Neuer Bestpreis: {current_cheapest:.2f} EUR) löst keine Benachrichtigung aus.")
             else:
-                print(f"  -> Erster Eintrag für Pod '{pod_id}' in der Datenbank (kein historischer Vergleich möglich).")
+                print(f"  -> Erster Eintrag für Kombination '{pod_pair_id}' in der Datenbank (kein historischer Vergleich möglich).")
 
             try:
                 insert_flight(
-                    pod_id=pod_id,
-                    price=total_price,
-                    airline=airline_str,
-                    booking_link=booking_link,
-                    is_live_check=is_live_val,
-                    flight_date=flight_date
+                    pod_id=pod_pair_id,
+                    price_oneway_hin=price_hin,
+                    price_oneway_zurueck=price_zurueck,
+                    price_oneway_total=price_oneway_total,
+                    price_roundtrip=price_rt,
+                    airline_hin=airline_hin_str,
+                    airline_zurueck=airline_zurueck_str,
+                    airline_roundtrip=airline_rt_str,
+                    booking_link_hin=booking_link_hin,
+                    booking_link_zurueck=booking_link_zurueck,
+                    booking_link_roundtrip=booking_link_rt,
+                    flight_date_hin=flight_date_hin,
+                    flight_date_zurueck=flight_date_zurueck,
+                    is_live_check=is_live_check
                 )
-                print(f"  -> Günstigster Preis gefunden: {total_price:.2f} EUR (inkl. {bag_cost:.2f} EUR Gepäck)")
-                print(f"  -> Airline: {airline_str} | Link: {booking_link[:50]}...")
-                print(f"  -> In Datenbank gespeichert.")
+                print(f"  -> Preise erfolgreich gespeichert:")
+                print(f"     Oneways: {price_hin:.2f} EUR + {price_zurueck:.2f} EUR = {price_oneway_total:.2f} EUR")
+                print(f"     Roundtrip: {price_rt:.2f} EUR")
+                print(f"     Bester Weg: {winner}")
             except Exception as db_err:
                 print(f"  -> Fehler beim Speichern in die Datenbank: {db_err}")
         else:
-            print(f"  -> Kein passender Flug für Pod {pod_id} gefunden.")
+            print(f"  -> [Warning] Unvollständige Flugdaten für Pod-Kombination '{pod_pair_id}'.")
         print()
 
 if __name__ == "__main__":
