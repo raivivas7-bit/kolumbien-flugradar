@@ -26,13 +26,6 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Make check boxes look like toggle tags */
-    .stCheckbox {
-        background-color: #F3F4F6;
-        padding: 5px 10px;
-        border-radius: 8px;
-        margin-bottom: 5px;
-    }
     
     /* Style table buttons or links */
     a.booking-btn {
