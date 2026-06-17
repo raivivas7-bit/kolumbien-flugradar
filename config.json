@@ -1,0 +1,101 @@
+{
+  "search_settings": {
+    "max_stopovers": 1,
+    "max_fly_duration_hours": 21,
+    "currency": "EUR"
+  },
+  "travel_pods": {
+    "hinfluege": [
+      {
+        "id": "hin_p_a_k_s_c",
+        "passengers": ["P", "A", "K", "S", "C"],
+        "bags_to_add": 3,
+        "from": "MUC",
+        "to": "BOG",
+        "date_from": "31/07/2026",
+        "time_from": "20:00",
+        "date_to": "03/08/2026"
+      },
+      {
+        "id": "hin_r",
+        "passengers": ["R"],
+        "bags_to_add": 1,
+        "from": "CGN,FRA,AMS,DUS",
+        "to": "BOG",
+        "date_from": "31/07/2026",
+        "date_to": "03/08/2026"
+      },
+      {
+        "id": "hin_m",
+        "passengers": ["M"],
+        "bags_to_add": 0,
+        "from": "CGN,FRA,AMS,DUS",
+        "to": "PEI",
+        "date_from": "06/08/2026",
+        "time_from": "18:00",
+        "date_to": "07/08/2026",
+        "arrival_time_to": "14:00"
+      }
+    ],
+    "rueckfluege": [
+      {
+        "id": "rueck_k",
+        "passengers": ["K"],
+        "bags_to_add": 1,
+        "from": "CTG",
+        "to": "MUC",
+        "date_from": "17/08/2026",
+        "date_to": "18/08/2026",
+        "arrival_date_to": "19/08/2026"
+      },
+      {
+        "id": "rueck_m",
+        "passengers": ["M"],
+        "bags_to_add": 0,
+        "from": "CTG",
+        "to": "CGN,FRA,AMS,DUS",
+        "date_from": "17/08/2026",
+        "date_to": "18/08/2026",
+        "arrival_date_to": "19/08/2026"
+      },
+      {
+        "id": "rueck_s_c",
+        "passengers": ["S", "C"],
+        "bags_to_add": 1,
+        "from": "CTG,BOG",
+        "to": "MUC",
+        "date_from": "24/08/2026",
+        "date_to": "28/08/2026"
+      },
+      {
+        "id": "rueck_p_a_OPTION_1_FRUEH",
+        "passengers": ["P", "A"],
+        "bags_to_add": 1,
+        "from": "CTG,BOG",
+        "to": "MUC",
+        "date_from": "17/08/2026",
+        "date_to": "18/08/2026",
+        "note": "Fliegen zeitgleich mit K"
+      },
+      {
+        "id": "rueck_p_a_OPTION_2_SPAET",
+        "passengers": ["P", "A"],
+        "bags_to_add": 1,
+        "from": "CTG,BOG",
+        "to": "MUC",
+        "date_from": "24/08/2026",
+        "date_to": "28/08/2026",
+        "note": "Fliegen zeitgleich mit S+C"
+      },
+      {
+        "id": "rueck_r",
+        "passengers": ["R"],
+        "bags_to_add": 1,
+        "from": "CTG,BOG",
+        "to": "CGN,FRA,AMS,DUS",
+        "date_from": "24/08/2026",
+        "date_to": "28/08/2026"
+      }
+    ]
+  }
+}
