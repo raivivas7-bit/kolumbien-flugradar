@@ -1,6 +1,6 @@
 {
   "search_settings": {
-    "max_stopovers": 1,
+    "max_stopovers": 2,
     "max_fly_duration_hours": 24,
     "currency": "EUR"
   },
