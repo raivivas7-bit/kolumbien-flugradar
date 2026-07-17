@@ -176,8 +176,20 @@ def fetch_flight_price_rapidapi(start: str, dest: str, date: str, passengers_cou
         if not itineraries:
             return None
             
-        # Finde den absolut günstigsten Flug aus den Ergebnissen
-        cheapest = min(itineraries, key=lambda x: x.get("price", {}).get("amount", float('inf')))
+        # FILTER: Only keep itineraries where departure and arrival match exactly the requested IATA codes
+        valid_itineraries = []
+        for it in itineraries:
+            out_segments = it.get("outbound", {}).get("segments", [])
+            if out_segments:
+                dep_airport = out_segments[0].get("source", {}).get("station", {}).get("code", "")
+                arr_airport = out_segments[-1].get("destination", {}).get("station", {}).get("code", "")
+                if dep_airport.upper() == start.upper() and arr_airport.upper() == dest.upper():
+                    valid_itineraries.append(it)
+                    
+        if not valid_itineraries:
+            return None
+            
+        cheapest = min(valid_itineraries, key=lambda x: x.get("price", {}).get("amount", float('inf')))
         
         price_val = cheapest.get("price", {}).get("amount")
         if price_val is None:
@@ -287,8 +299,25 @@ def fetch_flight_price_roundtrip(start: str, dest: str, date_out: str, date_in: 
         if not itineraries:
             return None
             
-        # Finde den absolut günstigsten Flug aus den Ergebnissen
-        cheapest = min(itineraries, key=lambda x: x.get("price", {}).get("amount", float('inf')))
+        # FILTER: Only keep itineraries where departure and arrival match exactly the requested IATA codes for both outbound and inbound
+        valid_itineraries = []
+        for it in itineraries:
+            out_segments = it.get("outbound", {}).get("segments", [])
+            in_segments = it.get("inbound", {}).get("segments", [])
+            if out_segments and in_segments:
+                dep_out = out_segments[0].get("source", {}).get("station", {}).get("code", "")
+                arr_out = out_segments[-1].get("destination", {}).get("station", {}).get("code", "")
+                dep_in = in_segments[0].get("source", {}).get("station", {}).get("code", "")
+                arr_in = in_segments[-1].get("destination", {}).get("station", {}).get("code", "")
+                
+                if (dep_out.upper() == start.upper() and arr_out.upper() == dest.upper() and 
+                    dep_in.upper() == dest.upper() and arr_in.upper() == start.upper()):
+                    valid_itineraries.append(it)
+                    
+        if not valid_itineraries:
+            return None
+            
+        cheapest = min(valid_itineraries, key=lambda x: x.get("price", {}).get("amount", float('inf')))
         
         price_val = cheapest.get("price", {}).get("amount")
         if price_val is None:
